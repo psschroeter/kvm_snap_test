@@ -27,13 +27,30 @@ class CDCAPI
   # DP
   # DISK_OFFERING = "47" # 10GB
   # ZONE = 1
-  
+
+  def check_environment
+    # Also, your VMs require public ssh keys for the root user
+    # to exist that match your CLOUD_KEY private key path
+    #
+    # You must also have the following values set in your environment:
+    #
+    # ENV["API_KEY"]    -- cloudstack api key
+    # ENV["API_SECRET"] -- cloudstack api secret
+    # ENV["API_URL"]    -- cloudstack api endpoint
+    # ENV["CLOUD_KEY"]  -- local file path to your private SSH key material
+    #
+    %w{API_KEY API_SECRET API_URL CLOUD_KEY}.each do |var|
+      raise "ERROR: you must set #{var} in you environment" unless ENV[var]
+    end
+  end
+
   def initialize(endpoint_url, api_key, secret_key, logger = nil)
+    check_environment
     @log = logger
     @log ||= Logger.new(STDOUT)
-        
+
     version = "2.2"
-    
+
     @device = { 
       "1" => "/dev/vdb",
       "2" => "/dev/vdc", 
@@ -45,10 +62,10 @@ class CDCAPI
       "8" => "/dev/vdi", 
       "9" => "/dev/vdj",
     }
-    
+
     @cloud_stack = RightScale::CloudStackFactory.right_cloud_stack_class_for_version(version).new(api_key, secret_key, endpoint_url)
   end
-  
+
   # Direct access to right_cloud_stack gem
   # Useful for debugging in irb
   def handle
@@ -69,7 +86,7 @@ class CDCAPI
 
   # === Returns
   # String:: newly created volume id
-  def volume_create_from_snap(name, snapshot_id)
+  def volume_create_from_snap(source, name, snapshot_id)
     retries = 3
     begin 
       @log.info "Creating volume #{name} from snapshot id #{snapshot_id}..."
@@ -88,7 +105,7 @@ class CDCAPI
     @log.info "Created volume id: #{vol_id}"
     vol_id
   end
-  
+
   # Waits for attachment
   def volume_attach(vm_id, volume_id)
     @log.info "Attaching volume #{volume_id} to VM #{vm_id}..."
@@ -100,8 +117,8 @@ class CDCAPI
     device_id = result["queryasyncjobresultresponse"]["jobresult"]["volume"]["deviceid"]
     @device[device_id]
   end
-  
-  def volume_detach(volume_id)
+
+  def volume_detach(dom_id, volume_id)
     @log.info "Detaching volume #{volume_id}..."
     ret = @cloud_stack.detach_volume(volume_id)
     id = ret["detachvolumeresponse"]["jobid"] 
@@ -110,14 +127,14 @@ class CDCAPI
     result = job_result(id)
     result
   end
-  
+
   def volume_delete(volume_id)
     @log.info "Deleting volume #{volume_id}..."
     ret = @cloud_stack.delete_volume(volume_id)
     success = ret["deletevolumeresponse"]["success"] 
     @log.info "Deleted. #{success}" 
   end
-  
+
   def snapshot_create(volume_id)
     @log.info "Creating snapshot from #{volume_id}..."
     ret = @cloud_stack.create_snapshot(volume_id)
@@ -128,15 +145,15 @@ class CDCAPI
     snap_id = result["queryasyncjobresultresponse"]["jobresult"]["snapshot"]["id"]
     snap_id
   end
-  
-  def snapshot_delete(snap_id)
+
+  def snapshot_delete(volume_id, snap_id)
     @log.info "Deleting volume #{snap_id}..."
     ret = @cloud_stack.delete_snapshot(snap_id)
     id = ret["deletesnapshotresponse"]["jobid"] 
     wait_for_job id 
     @log.info "Deleted."
   end
-  
+
   # Use this to deduce the attached device -- since KVM does not 
   # attach to the device we request
   def get_current_devices(proc_partitions_output)
@@ -149,22 +166,22 @@ class CDCAPI
     devices = partitions.select do |partition|
       partition =~ /[a-z]$/
     end.sort.map {|device| "/dev/#{device}"}
-    if devices.empty?
-      devices = partitions.select do |partition|
-        partition =~ /[0-9]$/
-      end.sort.map {|device| "/dev/#{device}"}
-    end
-    devices
+      if devices.empty?
+        devices = partitions.select do |partition|
+          partition =~ /[0-9]$/
+        end.sort.map {|device| "/dev/#{device}"}
+      end
+      devices
   end
 
   private
-  
+
   def job_result(jobid)
     result = @cloud_stack.query_async_job_result(jobid)
     @log.debug "Result: #{result.inspect}"
     result
   end
-  
+
   def job_running?(jobid)
     ret = job_result(jobid)
     unless ret["queryasyncjobresultresponse"]["jobresultcode"] == "0" 
@@ -174,14 +191,14 @@ class CDCAPI
     end
     ret["queryasyncjobresultresponse"]["jobstatus"] == "0" # 0 = PENDING
   end
-  
+
   def wait_for_job(jobid, delay_sec = 5)
     while job_running?(jobid)
       @log.info "Waiting..."
       sleep delay_sec
     end
   end
- 
+
 end
 
 
