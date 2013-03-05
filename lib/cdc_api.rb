@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 
+require "rubygems"
 require "logger"
 require "set"
 require "right_http_connection"

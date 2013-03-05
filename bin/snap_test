@@ -8,13 +8,13 @@ require "ruby-debug"
 require "logger"
 require "snap_test_runner"
 require "virsh_api"
-#require "cdc_api"
+require "cdc_api"
 
 def api_factory(logger, type = "cdc")
   if type == "virsh"
     VirshAPI.new(logger)
   elsif type == "cdc"
-#    CDCAPI.new(ENV["API_URL"], ENV["API_KEY"], ENV["API_SECRET"], logger)
+    CDCAPI.new(ENV["API_URL"], ENV["API_KEY"], ENV["API_SECRET"], logger)
   else
     raise "No test type supplied, virsh or cdc must be the first argument supplied"
   end

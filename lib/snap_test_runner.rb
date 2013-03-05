@@ -38,6 +38,27 @@ class SnapTestRunner
     #
     remote_cmd(ENV['MASTER_IP'], "mkdir /mnt/master") # for mounting source volume
     remote_cmd(ENV['SLAVE_IP'],"mkdir /mnt/slave")  # for mounting snapshots volumes 
+    # 
+    # Create and attach volume to "master" VM
+    # 
+    master_volume_id = api.volume_create("kvm_test_master") 
+    # gather on to the list of current devices (KVM Workaround - part 1)  
+    partitions = remote_cmd(ENV['MASTER_IP'], "cat /proc/partitions")
+    devices_before_attach = api.get_current_devices(partitions)
+    device = api.volume_attach(ENV['MASTER_ID'], master_volume_id)
+    log.info "KVM WORKAROUND PART1: ignoring device from API #{device}"
+    # don't believe device returned by API (KVM Workaround - part 2)
+    partitions = remote_cmd(ENV['MASTER_IP'], "cat /proc/partitions")
+    current_devices = api.get_current_devices(partitions)
+    device = (Set.new(current_devices) - Set.new(devices_before_attach)).first
+    log.info "KVM WORKAROUND PART2: using device #{device}"
+
+    #
+    # Create xfs filesystem, mount and create testfile
+    #
+    remote_cmd(ENV['MASTER_IP'], "mkfs.xfs #{device}")
+    remote_cmd(ENV['MASTER_IP'], "mount #{device} /mnt/master")
+    remote_cmd(ENV['MASTER_IP'], "sync")
 
     # Test loop
     #
@@ -47,30 +68,9 @@ class SnapTestRunner
       count += 1
       log.info "Pass #{count}"
 
-      # 
-      # Create and attach volume to "master" VM
-      # 
-      master_volume_id = api.volume_create("kvm_test_master") 
-      # gather on to the list of current devices (KVM Workaround - part 1)  
-      partitions = remote_cmd(ENV['MASTER_IP'], "cat /proc/partitions")
-      devices_before_attach = api.get_current_devices(partitions)
-      device = api.volume_attach(ENV['MASTER_ID'], master_volume_id)
-      log.info "KVM WORKAROUND PART1: ignoring device from API #{device}"
-      # don't believe device returned by API (KVM Workaround - part 2)
-      partitions = remote_cmd(ENV['MASTER_IP'], "cat /proc/partitions")
-      current_devices = api.get_current_devices(partitions)
-      device = (Set.new(current_devices) - Set.new(devices_before_attach)).first
-      log.info "KVM WORKAROUND PART2: using device #{device}"
-
-      #
-      # Create xfs filesystem, mount and create testfile
-      #
-      remote_cmd(ENV['MASTER_IP'], "mkfs.xfs #{device}")
-      remote_cmd(ENV['MASTER_IP'], "mount #{device} /mnt/master")
-      remote_cmd(ENV['MASTER_IP'], "sync")
       # Create testfile for compare
       log.info "Generating new testfile..."
-      remote_cmd(ENV['MASTER_IP'], "dd if=/dev/urandom of=/mnt/master/testfile bs=16M count=8")
+      remote_cmd(ENV['MASTER_IP'], "dd if=/dev/urandom of=/mnt/master/testfile bs=1024 count=524288")
       log.info "Calculate fingerprint of testfile..."
       r = remote_cmd(ENV['MASTER_IP'], "md5sum /mnt/master/testfile")
       md5_orig = r.split(" ").first
@@ -120,15 +120,14 @@ class SnapTestRunner
         api.snapshot_delete(master_volume_id, snap_id)
         api.volume_detach(ENV['SLAVE_ID'], slave_id)  
         api.volume_delete(slave_id)
-        log.info "  Cleaning up master..."
-        remote_cmd(ENV['MASTER_IP'],"umount /mnt/master")
-        api.volume_detach(ENV['MASTER_ID'], master_volume_id)
-        api.volume_delete(master_volume_id)
       else
         log.info "  FAILED: Not cleaning up to allow for system inspection..."
       end
-
     end
+    log.info "  Cleaning up master..."
+    remote_cmd(ENV['MASTER_IP'],"umount /mnt/master")
+    api.volume_detach(ENV['MASTER_ID'], master_volume_id)
+    api.volume_delete(master_volume_id)
 
     end_time = Time.now
     log.info "Iterations: #{count} Start:#{start_time} End:#{end_time} Total: #{end_time-start_time}"  
